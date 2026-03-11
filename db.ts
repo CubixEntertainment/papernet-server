@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import * as jose from "jsr:@panva/jose";
 import * as eddsa from "jsr:@noble/ed25519";
+import { DataTypes } from "sequelize";
 
 export let client:SupabaseClient | undefined = undefined
 
@@ -129,7 +130,7 @@ export async function get_user_by_uuid(user_id:string) {
     if (client == undefined) {
         return {
             status: 401,
-            msg: "Cannot perform lookup on uninitialized client.",
+            msg: "Cannot perform action on uninitialized client.",
         }
     }
 
@@ -160,7 +161,7 @@ export async function is_user_banned(user_id:string) {
     if (client == undefined) {
         return {
             status: 401,
-            msg: "Cannot perform lookup on uninitialized client.",
+            msg: "Cannot perform action on uninitialized client.",
         }
     }
 
@@ -202,11 +203,47 @@ export async function is_user_banned(user_id:string) {
     }
 }
 
+export async function get_community_by_name(name: string) {
+    if (client == undefined) {
+        return {
+            status: 401,
+            msg: "Cannot perform action on uninitialized client.",
+        }
+    }
+
+    const { data, error } = await client
+    .schema('papernet')
+    .from('communities')
+    .select()
+    .eq('name', name)
+
+    if (error) {
+        console.error("something went wrong")
+        return {
+            status: 404,
+            msg: error.message,
+        }
+    }
+
+    if (data.length == 0) {
+        return {
+            status: 404,
+            msg: "No community named \'"+name+"\' found."
+        }
+    }
+
+    return {
+        status: 200,
+        msg: "Success",
+        data: data[0]
+    }
+}
+
 export async function create_post(content:string, user_id: string, community_id: number) {
     if (client == undefined) {
         return {
             status: 401,
-            msg: "Cannot perform lookup on uninitialized client.",
+            msg: "Cannot perform action on uninitialized client.",
         }
     }
 
@@ -241,4 +278,105 @@ export async function create_post(content:string, user_id: string, community_id:
         data: data[0]
     }
 
+}
+
+export async function get_posts_from_community(community_id:number) {
+    if (client == undefined) {
+        return {
+            status: 401,
+            msg: "Cannot perform action on uninitialized client.",
+        }
+    }
+
+    const { data, error } = await client
+    .schema('papernet')
+    .from('posts')
+    .select()
+    .eq('community', community_id)
+    .order('id', { ascending: false })
+
+    if (error) {
+        console.error("something went wrong")
+        return {
+            status: 404,
+            msg: error.message,
+        }
+    }
+
+    if (data.length == 0) {
+        return {
+            status: 404,
+            msg: "No posts for community found."
+        }
+    }
+
+    return {
+        status: 200,
+        msg: "Success",
+        data: data
+    }
+}
+
+export async function get_post_by_id(post_id:number) {
+    if (client == undefined) {
+        return {
+            status: 401,
+            msg: "Cannot perform action on uninitialized client.",
+        }
+    }
+
+    const { data, error } = await client
+    .schema('papernet')
+    .from('posts')
+    .select()
+    .eq('id', post_id)
+
+    if (error) {
+        console.error("something went wrong")
+        return {
+            status: 404,
+            msg: error.message,
+        }
+    }
+
+    if (data.length == 0) {
+        return {
+            status: 404,
+            msg: "Post not found."
+        }
+    }
+
+    return {
+        status: 200,
+        msg: "Success",
+        data: data[0]
+    }
+}
+
+export async function delete_post(post_id:number) {
+    if (client == undefined) {
+        return {
+            status: 401,
+            msg: "Cannot perform action on uninitialized client.",
+        }
+    }
+
+    const { error } = await client
+    .schema('papernet')
+    .from('posts')
+    .delete()
+    .eq('id', post_id)
+
+    if (error) {
+        console.error("something went wrong")
+        return {
+            status: 404,
+            msg: error.message,
+        }
+    }
+
+    return {
+        status: 200,
+        msg: "Success"
+    }
 }

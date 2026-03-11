@@ -5,7 +5,7 @@ import chalk from "npm:chalk";
 import instance_name from "./config.js";
 import { gen } from "./codegen.js";
 import { Sequelize } from 'sequelize';
-import { create_post, get_user_by_uuid, is_user_banned, validate_token } from "./db.ts";
+import { create_post, delete_post, get_community_by_name, get_post_by_id, get_posts_from_community, get_user_by_uuid, is_user_banned, validate_token } from "./db.ts";
 
 const connectedUsers = new Map();
 let backgroundTasksStarted = false;
@@ -221,10 +221,33 @@ export function startHttpServer({ port } = {}) {
       try {
         const body = await req.json();
         console.log(body);
+        if (body.community == null) {
+          return new Response("Unauthorized", {
+            status: 401,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        } 
         const rawContent = (body && (body.content ?? body.p ?? body.text));
         const content = (rawContent == null) ? '' : String(rawContent).trim();
-       
-        const post = await create_post(content, user_id, 0)
+
+        // first verify the community exists
+        const dest = await get_community_by_name(body.community)
+
+        if (dest.status != 200) {
+          return new Response(dest.msg, {
+            status: 401,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        }
+
+        const post = await create_post(content, user_id, dest.data.id)
+
         if (post.status != 200 ) {
           return new Response(post.msg, {
             status: post.status,
@@ -253,29 +276,72 @@ export function startHttpServer({ port } = {}) {
         });
       }
     } else if (req.method === "GET" && url.pathname === endpoints.home) {
-      const posts = await Post.findAll({
-        order: [
-          ['timestamp', 'DESC']
-        ]
-      });
-      const mappedPosts = await Promise.all(posts.map(async post => {
-        let authorName = null;
-        try {
-          const author = post.author || await User.findByPk(post.userId);
-          authorName = author ? author.name : null;
-        } catch {
-          authorName = null;
-        }
-        return {
-          user: authorName,
-          content: post.content,
-          timestamp: post.timestamp || post.createdAt,
-          id: post.id
-        };
-      }));
+      const token = req.headers.get("token");
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      const community_id = req.headers.get("community_id");
+      if (!token || !user_id || !device_id || !community_id ) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response(tokenData.msg, {
+          status: tokenData.status,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const foundUser = await get_user_by_uuid(user_id);
+
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const banData = await is_user_banned(user_id)
+
+      if (banData.status != 200) {
+        return new Response(banData.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const posts = await get_posts_from_community(community_id)
+
+      if (posts.status != 200) {
+        return new Response(posts.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+
       return new Response(
         JSON.stringify({
-          posts: mappedPosts
+          posts
         }), {
         headers: {
           ...CORS_HEADERS,
@@ -283,18 +349,11 @@ export function startHttpServer({ port } = {}) {
         }
       });
     } else if (req.method === "DELETE" && url.pathname === "/api/post") {
-      const postId = url.searchParams.get("id");
-      if (!postId) {
-        return new Response("Bad Request", {
-          status: 400,
-          headers: {
-            ...CORS_HEADERS,
-            "Content-Type": "text/plain"
-          }
-        });
-      }
       const token = req.headers.get("token");
-      if (!token) {
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      const post_id = req.headers.get("post_id");
+      if (!token || !user_id || !device_id || !post_id ) {
         return new Response("Unauthorized", {
           status: 401,
           headers: {
@@ -303,13 +362,23 @@ export function startHttpServer({ port } = {}) {
           }
         });
       }
-      const foundUser = await User.findOne({
-        where: {
-          token
-        }
-      });
-      if (!foundUser) {
-        return new Response("Unauthorized", {
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response(tokenData.msg, {
+          status: tokenData.status,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const foundUser = await get_user_by_uuid(user_id);
+
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
           status: 401,
           headers: {
             ...CORS_HEADERS,
@@ -317,22 +386,33 @@ export function startHttpServer({ port } = {}) {
           }
         });
       }
-      const postToDelete = await Post.findOne({
-        where: {
-          id: postId
-        }
-      });
-      if (!postToDelete) {
-        return new Response("Not Found", {
-          status: 404,
+
+      const banData = await is_user_banned(user_id)
+
+      if (banData.status != 200) {
+        return new Response(banData.msg, {
+          status: 401,
           headers: {
             ...CORS_HEADERS,
             "Content-Type": "text/plain"
           }
         });
       }
-      const isModerator = ['mod', 'admin', 'sysadmin'].includes(foundUser.role);
-      if (postToDelete.userId !== foundUser.id && !isModerator) {
+      
+
+      const post = await get_post_by_id(post_id)
+      if (post.status != 200) {
+        return new Response(post.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+      
+      const isModerator = foundUser.data.is_moderator
+      if (post.data.author !== foundUser.data.id && !isModerator) {
         return new Response("Forbidden", {
           status: 403,
           headers: {
@@ -341,23 +421,20 @@ export function startHttpServer({ port } = {}) {
           }
         });
       }
+
       try {
-        const postDetails = {
-          id: postToDelete.id,
-          content: postToDelete.content,
-          authorId: postToDelete.userId
-        };
-        await postToDelete.destroy();
-        try {
-          await ActionLog.create({
-            actorId: foundUser.id,
-            targetUserId: postDetails.authorId,
-            action: 'delete_post',
-            details: JSON.stringify(postDetails)
+        // TODO: add event to action log
+        const ctx = await delete_post(post_id)
+        if (post.status != 200) {
+          return new Response(post.ctx.msg, {
+            status: 401,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
           });
-        } catch (logErr) {
-          console.error('Failed to write action log for post deletion:', logErr);
         }
+
         return new Response(JSON.stringify({
           success: true
         }), {
@@ -366,6 +443,7 @@ export function startHttpServer({ port } = {}) {
             "Content-Type": "application/json"
           }
         });
+
       } catch {
         return new Response("Internal Server Error", {
           status: 500,
@@ -865,8 +943,7 @@ export function startHttpServer({ port } = {}) {
           'Content-Type': 'application/json'
         }
       });
-    }
-  else if (req.method === "POST" && url.pathname === "/api/inbox") {
+    } else if (req.method === "POST" && url.pathname === "/api/inbox") {
     const token = req.headers.get('token');
     if (!token) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
     const sender = await User.findOne({ where: { token } });
@@ -918,30 +995,30 @@ export function startHttpServer({ port } = {}) {
     } catch {
     return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
     }
-  } else if (req.method === "DELETE" && url.pathname === "/api/inbox") {
-    const token = req.headers.get('token');
-    if (!token) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
-    const actor = await User.findOne({ where: { token } });
-    if (!actor) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    } else if (req.method === "DELETE" && url.pathname === "/api/inbox") {
+      const token = req.headers.get('token');
+      if (!token) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+      const actor = await User.findOne({ where: { token } });
+      if (!actor) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-    const id = url.searchParams.get('id');
-    if (!id) return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+      const id = url.searchParams.get('id');
+      if (!id) return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-    const message = await InboxPost.findOne({ where: { id } });
-    if (!message) return new Response('Not Found', { status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+      const message = await InboxPost.findOne({ where: { id } });
+      if (!message) return new Response('Not Found', { status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-    const isModerator = ['mod', 'admin', 'sysadmin'].includes(actor.role);
-    // allow deletion if actor is sender, recipient, or moderator
-    if (message.userId !== actor.id && message.toUserId !== actor.id && !isModerator) {
-    return new Response('Forbidden', { status: 403, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+      const isModerator = ['mod', 'admin', 'sysadmin'].includes(actor.role);
+      // allow deletion if actor is sender, recipient, or moderator
+      if (message.userId !== actor.id && message.toUserId !== actor.id && !isModerator) {
+      return new Response('Forbidden', { status: 403, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+      }
+
+      try {
+      await message.destroy();
+      return new Response(JSON.stringify({ success: true }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+      } catch {
+      return new Response('Internal Server Error', { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+      }
     }
-
-    try {
-    await message.destroy();
-    return new Response(JSON.stringify({ success: true }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
-    } catch {
-    return new Response('Internal Server Error', { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
-    }
-  }
   })
 };
