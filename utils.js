@@ -5,7 +5,7 @@ import chalk from "npm:chalk";
 import instance_name from "./config.js";
 import { gen } from "./codegen.js";
 import { Sequelize } from 'sequelize';
-import { create_post, delete_post, get_community_by_name, get_post_by_id, get_posts_from_community, get_user_by_uuid, is_user_banned, validate_token } from "./db.ts";
+import { ban_user_by_uuid, create_post, create_reply, delete_post, delete_user, get_community_by_name, get_post_by_id, get_posts_from_community, get_replies_from_post_id, get_user_by_name, get_user_by_uuid, is_user_banned, like_post_by_id, like_reply_by_id, validate_token } from "./db.ts";
 
 const connectedUsers = new Map();
 let backgroundTasksStarted = false;
@@ -154,9 +154,9 @@ export function startHttpServer({ port } = {}) {
       "Access-Control-Allow-Headers": "Content-Type, token",
     };
 
-    // TODO: This should be a global where each endpoint is a relative community
     const endpoints = {
-      home: "/api/feed"
+      home: "/api/feed",
+      posts:"/api/posts"
     };
 
     if (req.method === "OPTIONS") {
@@ -348,7 +348,7 @@ export function startHttpServer({ port } = {}) {
           "Content-Type": "application/json"
         }
       });
-    } else if (req.method === "DELETE" && url.pathname === "/api/post") {
+    } else if (req.method === "DELETE" && url.pathname === endpoints.posts) {
       const token = req.headers.get("token");
       const user_id = req.headers.get("user_id");
       const device_id = req.headers.get("device_id");
@@ -400,7 +400,7 @@ export function startHttpServer({ port } = {}) {
       }
       
 
-      const post = await get_post_by_id(post_id)
+      const post = await get_post_by_id(post_id, true)
       if (post.status != 200) {
         return new Response(post.msg, {
           status: 401,
@@ -453,74 +453,449 @@ export function startHttpServer({ port } = {}) {
           }
         });
       }
+    } else if (req.method === "GET" && url.pathname === endpoints.posts) {
+      const token = req.headers.get("token");
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      const post_id = req.headers.get("post_id");
+      if (!token || !user_id || !device_id || !post_id ) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response(tokenData.msg, {
+          status: tokenData.status,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const foundUser = await get_user_by_uuid(user_id);
+
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const banData = await is_user_banned(user_id)
+
+      if (banData.status != 200) {
+        return new Response(banData.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const post = await get_post_by_id(post_id, false)
+      if (post.status != 200) {
+        return new Response(post.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+    
+      const replies = await get_replies_from_post_id(post_id);
+      // if no replies do nothing
+
+      return new Response(
+        JSON.stringify({
+          status: post.status,
+          post: post.data,
+          replies: replies.data
+        }), {
+        headers: {
+          ...CORS_HEADERS,
+          "Content-Type": "application/json"
+        }
+      });
+    } else if (req.method === "GET" && url.pathname === "/api/post/like") {
+      const token = req.headers.get("token");
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      const post_id = req.headers.get("post_id");
+      if (!token || !user_id || !device_id || !post_id ) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response(tokenData.msg, {
+          status: tokenData.status,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const foundUser = await get_user_by_uuid(user_id);
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const banData = await is_user_banned(user_id)
+      if (banData.status != 200) {
+        return new Response(banData.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const post = await like_post_by_id(post_id, user_id)
+      if (post.status != 200) {
+        return new Response(post.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: post.status,
+          post: post.data
+        }), {
+        headers: {
+          ...CORS_HEADERS,
+          "Content-Type": "application/json"
+        }
+      });
+    } else if (req.method === "POST" && url.pathname === "/api/replies") {
+      const token = req.headers.get("token");
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      if (!token || !user_id || !device_id) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response("Unauthorized", {
+          status: tokenData.status,
+          message: tokenData.msg,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const foundUser = await get_user_by_uuid(user_id);
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const banData = await is_user_banned(user_id)
+      if (banData.status != 200) {
+        return new Response(banData.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      try {
+        const body = await req.json();
+        console.log(body);
+        if (body.parent == null) {
+          return new Response("Unauthorized", {
+            status: 401,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        } 
+        const rawContent = (body && (body.content ?? body.p ?? body.text));
+        const content = (rawContent == null) ? '' : String(rawContent).trim();
+
+        // first verify the post exists
+        const dest = await get_post_by_id(body.parent, false)
+
+        if (dest.status != 200) {
+          return new Response(dest.msg, {
+            status: 401,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        }
+
+        const post = await create_reply(content, user_id, dest.data.id)
+
+        if (post.status != 200 ) {
+          return new Response(post.msg, {
+            status: post.status,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        }
+
+        return new Response(JSON.stringify({
+          success: true
+        }), {
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "application/json"
+          }
+        });
+      } catch {
+        return new Response("Bad Request", {
+          status: 400,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+    } else if (req.method === "GET" && url.pathname === "/api/replies/like") {
+      const token = req.headers.get("token");
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      const reply_id = req.headers.get("reply_id");
+      if (!token || !user_id || !device_id || !reply_id ) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response(tokenData.msg, {
+          status: tokenData.status,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const foundUser = await get_user_by_uuid(user_id);
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const banData = await is_user_banned(user_id)
+      if (banData.status != 200) {
+        return new Response(banData.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const reply = await like_reply_by_id(reply_id, user_id)
+      if (reply.status != 200) {
+        return new Response(reply.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: reply.status,
+          reply: reply.data
+        }), {
+        headers: {
+          ...CORS_HEADERS,
+          "Content-Type": "application/json"
+        }
+      });
     } else if (req.method === "POST" && url.pathname === "/api/ban") {
-      const token = req.headers.get('token');
-      if (!token) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      const actor = await User.findOne({
-        where: {
-          token
-        }
-      });
-      if (!actor) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      if (!['mod', 'admin', 'sysadmin'].includes(actor.role)) return new Response('Forbidden', {
-        status: 403,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      try {
-        const body = await req.json();
-        const targetName = body.user || body.name || body.uuid;
-        if (!targetName) return new Response('Bad Request', {
-          status: 400,
+      const token = req.headers.get("token");
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      if (!token || !user_id || !device_id ) {
+        return new Response("Unauthorized", {
+          status: 401,
           headers: {
             ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
+            "Content-Type": "text/plain"
           }
         });
-        const until = body.until || null;
-        const days = body.days || null;
-        const where = (body.uuid) ? {
-          uuid: body.uuid
-        } : {
-          name: targetName
-        };
-        const target = await User.findOne({
-          where
-        });
-        if (!target) return new Response('Not Found', {
-          status: 404,
+      }
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response(tokenData.msg, {
+          status: tokenData.status,
           headers: {
             ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
+            "Content-Type": "text/plain"
           }
         });
-        if (target.role === 'sysadmin' && actor.role !== 'sysadmin') return new Response('Forbidden', {
+      }
+
+      const foundUser = await get_user_by_uuid(user_id);
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const banData = await is_user_banned(user_id)
+      if (banData.status != 200) {
+        return new Response(banData.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+      
+      const isModerator = foundUser.data.is_moderator
+      if (!isModerator) {
+        return new Response("Forbidden", {
           status: 403,
           headers: {
             ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
+            "Content-Type": "text/plain"
           }
         });
-        target.banned = true;
-        if (until) target.banned_until = new Date(until);
-        else if (days) target.banned_until = new Date(Date.now() + (Number(days) * 24 * 3600 * 1000));
-        else target.banned_until = null;
-        await target.save();
-        console.log(`${actor.name} banned ${target.name} until ${target.banned_until}`);
+      }
+
+
+      try {
+        const body = await req.json();
+        if (!body.target) {
+          return new Response("Unauthorized", {
+            status: 401,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        }
+
+        if (body.target === foundUser.data.username) {
+          return new Response("Forbidden", {
+            status: 403,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        }
+
+        const target = await get_user_by_name(body.target)
+        if (target.status !== 200) {
+          return new Response('Bad Request', {
+            status: 400,
+            headers: {
+              ...CORS_HEADERS,
+              'Content-Type': 'text/plain'
+            }
+          });
+        }
+
+        // if user is already banned, do nothing
+        const isBanned = await is_user_banned(target.data.id)
+        if (isBanned.status != 200) {
+          return new Response(isBanned.msg, {
+            status: 401,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        }
+
+        const until = new Date(body.until)|| null;
+        const why = body.reason || null;
+
+        const res = await ban_user_by_uuid(target.data.id, until, why);
+        if (res.status != 200) {
+          return new Response(res.msg, {
+            status: res.status,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "text/plain"
+            }
+          });
+        }
+
+
+        console.log(`${foundUser.data.username} banned ${target.data.username} until ${until}`);
         return new Response(JSON.stringify({
           success: true
         }), {
@@ -538,134 +913,58 @@ export function startHttpServer({ port } = {}) {
           }
         });
       }
-    } else if (req.method === "POST" && url.pathname === "/api/permissions") {
-      const token = req.headers.get('token');
-      if (!token) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      const actor = await User.findOne({
-        where: {
-          token
-        }
-      });
-      if (!actor) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      if (!['admin', 'sysadmin'].includes(actor.role)) return new Response('Forbidden', {
-        status: 403,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      try {
-        const body = await req.json();
-        const targetName = body.user || body.name || body.uuid;
-        const role = body.role;
-        if (!targetName || !role) return new Response('Bad Request', {
-          status: 400,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
-          }
-        });
-        if (!['user', 'mod', 'admin', 'sysadmin'].includes(role)) return new Response('Bad Request', {
-          status: 400,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
-          }
-        });
-        const where = (body.uuid) ? {
-          uuid: body.uuid
-        } : {
-          name: targetName
-        };
-        const target = await User.findOne({
-          where
-        });
-        if (!target) return new Response('Not Found', {
-          status: 404,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
-          }
-        });
-        if (target.role === 'sysadmin' && actor.role !== 'sysadmin') return new Response('Forbidden', {
-          status: 403,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
-          }
-        });
-        if (role === 'sysadmin' && actor.role !== 'sysadmin') return new Response('Forbidden', {
-          status: 403,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
-          }
-        });
-        target.role = role;
-        await target.save();
-        console.log(`${actor.name} set role ${role} for ${target.name}`);
-        return new Response(JSON.stringify({
-          success: true
-        }), {
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'application/json'
-          }
-        });
-      } catch {
-        return new Response('Bad Request', {
-          status: 400,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
-          }
-        });
-      }
+
     } else if (req.method === "GET" && url.pathname === "/api/me") {
-      const token = req.headers.get('token');
-      if (!token) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      const user = await User.findOne({
-        where: {
-          token
-        }
-      });
-      if (!user) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
+      const token = req.headers.get("token");
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      if (!token || !user_id || !device_id) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response("Unauthorized", {
+          status: tokenData.status,
+          message: tokenData.msg,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const whoIs = req.headers.get("lookup_id") || user_id
+
+      const foundUser = await get_user_by_uuid(whoIs);
+
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
       return new Response(JSON.stringify({
-        name: user.name,
-        display_name: user.display_name,
-        role: user.role,
-        uuid: user.uuid
+        status: foundUser.status,
+        data: foundUser.data
       }), {
         headers: {
           ...CORS_HEADERS,
           'Content-Type': 'application/json'
         }
       });
-    } else if (req.method === "GET" && url.pathname === "/api/actionlogs") {
+    } else if (req.method === "GET" && url.pathname === "/api/actionlogs") { // TODO: Rewrite this when actionlog is implemented
       const token = req.headers.get('token');
       if (!token) return new Response('Unauthorized', {
         status: 401,
@@ -794,118 +1093,58 @@ export function startHttpServer({ port } = {}) {
         });
       }
     } else if (req.method === 'DELETE' && url.pathname === '/api/account') {
-      const token = req.headers.get('token');
-      if (!token) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      const actor = await User.findOne({
-        where: {
-          token
-        }
-      });
-      if (!actor) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      const targetParam = url.searchParams.get('user') || url.searchParams.get('uuid') || null;
-      const instant = url.searchParams.get('instant') === 'true';
-      if (!targetParam || targetParam === actor.name || targetParam === actor.uuid) {
-        actor.deletion_scheduled_at = new Date(Date.now() + (7 * 24 * 3600 * 1000));
-        actor.deletion_initiated_by = actor.name;
-        await actor.save();
-        return new Response(JSON.stringify({
-          success: true,
-          scheduled: actor.deletion_scheduled_at
-        }), {
+      const token = req.headers.get("token");
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      if (!token || !user_id || !device_id) {
+        return new Response("Unauthorized", {
+          status: 401,
           headers: {
             ...CORS_HEADERS,
-            'Content-Type': 'application/json'
+            "Content-Type": "text/plain"
           }
         });
       }
-      const target = await User.findOne({
-        where: {
-          name: targetParam
-        }
-      }) || await User.findOne({
-        where: {
-          uuid: targetParam
-        }
-      });
-      if (!target) return new Response('Not Found', {
-        status: 404,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      if (!['mod', 'admin', 'sysadmin'].includes(actor.role)) return new Response('Forbidden', {
-        status: 403,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      if (target.role === 'sysadmin' && actor.role !== 'sysadmin') return new Response('Forbidden', {
-        status: 403,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      if (instant) {
-        target.deleted_at = new Date();
-        target.deletion_scheduled_at = null;
-        target.deletion_initiated_by = actor.name;
-        target.token = null;
-        target.pswd = null;
-        target.display_name = 'Deleted User';
-        target.name = `deleted_${target.uuid}`;
-        await target.save();
-        try {
-          await ActionLog.create({
-            actorId: actor.id,
-            targetUserId: target.id,
-            action: 'delete_account',
-            details: JSON.stringify({
-              instant: true
-            })
-          });
-        } catch (logErr) {
-          console.error('Failed to write action log for instant deletion:', logErr);
-        }
-        console.log(`${actor.name} instantly deleted account ${target.uuid}`);
-        return new Response(JSON.stringify({
-          success: true,
-          deleted: true
-        }), {
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
+        return new Response("Unauthorized", {
+          status: tokenData.status,
+          message: tokenData.msg,
           headers: {
             ...CORS_HEADERS,
-            'Content-Type': 'application/json'
-          }
-        });
-      } else {
-        target.deletion_scheduled_at = new Date(Date.now() + (7 * 24 * 3600 * 1000));
-        target.deletion_initiated_by = actor.name;
-        await target.save();
-        console.log(`${actor.name} scheduled deletion for ${target.name}`);
-        return new Response(JSON.stringify({
-          success: true,
-          scheduled: target.deletion_scheduled_at
-        }), {
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'application/json'
+            "Content-Type": "text/plain"
           }
         });
       }
+
+      // allow admins to delete other accounts
+      const foundUser = await get_user_by_uuid(user_id);
+
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+      
+      // TODO: Paranoid deletions
+
+      const res = await delete_user(user_id)
+
+      return new Response(JSON.stringify({
+        status: res.status,
+        message: res.msg
+      }), {
+        headers: {
+          ...CORS_HEADERS,
+          'Content-Type': 'application/json'
+        }
+      });
     } else if (req.method === "GET" && url.pathname === "/api/inbox") {
       const token = req.headers.get('token');
       if (!token) return new Response('Unauthorized', {
