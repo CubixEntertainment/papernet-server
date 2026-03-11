@@ -4,6 +4,8 @@ import * as eddsa from "jsr:@noble/ed25519";
 import { DataTypes } from "sequelize";
 
 export let client:SupabaseClient | undefined = undefined
+export const connectedUsers = new Map();
+export const userSockets = new Map();
 
 async function initalizeSupabase() {
     const url = Deno.env.get("PROJECT_URL")
@@ -49,6 +51,16 @@ export async function validate_token(token:string, device_id: string, user_id:st
                 status: 501,
                 msg: "Server Side authentication failed.",
             }
+        }
+    }
+
+    const entry = userSockets.has(user_id)
+    console.log(entry)
+    if (!entry) {
+        console.log("Unauthenicated user attempting to connect is not permitted")
+        return {
+            status: 404,
+            msg: "Unauthenticated."
         }
     }
 
@@ -365,6 +377,18 @@ export async function create_post(content:string, user_id: string, community_id:
             msg: error.message,
         }
     }
+
+    for (const [socket, userData] of connectedUsers.entries()) {
+        if (userData.userId !== user_id && userData.currentCommunity == community_id) {
+          try {
+            socket.send(JSON.stringify({
+              cmd: "new_post"
+            }));
+          } catch { 
+            console.log("unable to send msg to ")
+          }
+        }
+      }
 
     return {
         status: 200,

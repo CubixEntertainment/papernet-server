@@ -4,10 +4,11 @@ import { hash,  verify } from "jsr:@felix/bcrypt";
 import chalk from "npm:chalk";
 import instance_name from "./config.js";
 import { gen } from "./codegen.js";
-import { Sequelize } from 'sequelize';
-import { ban_user_by_uuid, create_post, create_reply, delete_post, delete_user, get_community_by_name, get_post_by_id, get_posts_from_community, get_replies_from_post_id, get_user_by_name, get_user_by_uuid, is_user_banned, like_post_by_id, like_reply_by_id, validate_token } from "./db.ts";
+import { DataTypes, Sequelize } from 'sequelize';
+import { ban_user_by_uuid, connectedUsers, create_post, create_reply, delete_post, delete_user, get_community_by_name, get_post_by_id, get_posts_from_community, get_replies_from_post_id, get_user_by_name, get_user_by_uuid, is_user_banned, like_post_by_id, like_reply_by_id, userSockets, validate_token } from "./db.ts";
 
-const connectedUsers = new Map();
+
+
 let backgroundTasksStarted = false;
 export function startHttpServer({ port } = {}) {
   if (!backgroundTasksStarted) {
@@ -55,15 +56,15 @@ export function startHttpServer({ port } = {}) {
     // TODO: make a callback to alert other users a new post was added
     // Post.addHook('afterCreate', async (post) => {
     //   const author = await User.findByPk(post.userId);
-    //   for (const [socket, userData] of connectedUsers.entries()) {
-    //     if (userData.uuid !== author.uuid) {
-    //       try {
-    //         socket.send(JSON.stringify({
-    //           cmd: "new_post"
-    //         }));
-    //       } catch { }
-    //     }
-    //   }
+      // for (const [socket, userData] of connectedUsers.entries()) {
+      //   if (userData.uuid !== author.uuid) {
+      //     try {
+      //       socket.send(JSON.stringify({
+      //         cmd: "new_post"
+      //       }));
+      //     } catch { }
+      //   }
+      // }
     // });
   }
 
@@ -75,14 +76,17 @@ export function startHttpServer({ port } = {}) {
       } = Deno.upgradeWebSocket(req);
       socket.addEventListener("close", () => {
         connectedUsers.delete(socket);
+        userSockets.delete(socket)
       });
 
       socket.addEventListener("open", () => {
         connectedUsers.set(socket, {
-          user: null,
-          token: null,
-          uuid: null,
-          client: null
+          client: null,
+          maelib: undefined,
+          libfinite: undefined,
+          userId: null,
+          deviceId: null,
+          currentCommunity: null
         });
         try {
           socket.send(JSON.stringify({
@@ -108,19 +112,61 @@ export function startHttpServer({ port } = {}) {
         }
         switch (data.cmd) {
           case "client_info": {
-            if (!data.client) {
+            if (!data.client || !data.maelib || !data.libfinite) {
               try {
                 socket.send(JSON.stringify({
                   error: true,
-                  code: 400,
+                  code: 4005,
                   reason: "badRequest"
                 }));
               } catch { }
+              socket.close(4008)
             }
             const entry = connectedUsers.get(socket) || {};
+            const user = userSockets.get(socket);
+            // ensure we're on matching maelib and libfinite versions
+            if (data.maelib !== "0.2.0" || data.client !== "maelink_gen2" || data.libfinite !== "0.7.3") {
+              try {
+                socket.send(JSON.stringify({
+                  error: true,
+                  code: 4001,
+                  reason: "oldClient"
+                }));
+              } catch { }
+              socket.close(4001)
+            }
+            
             entry.client = data.client;
-            entry.cver = data.version || "unknown";
-            entry.token = data.token || "";
+            entry.maelib = data.maelib;
+            entry.libfinite = data.libfinite;
+
+            if (!data.user_id || !data.device_id) {
+              try {
+                socket.send(JSON.stringify({
+                  error: true,
+                  code: 4000,
+                  reason: "noCredientials"
+                }));
+              } catch { }
+              socket.close(4000)
+            }
+
+            if (user || userSockets.has(data.user_id)) {
+              try {
+                socket.send(JSON.stringify({
+                  error: true,
+                  code: 4002,
+                  reason: "connectionExists"
+                }));
+              } catch { }
+              socket.close(4002)
+            } else {
+              userSockets.set(data.user_id, socket)
+            }
+
+            entry.userId = data.user_id
+            entry.deviceId = data.device_id
+            entry.currentCommunity = data.community || 0;
             connectedUsers.set(socket, entry);
             try {
               socket.send(JSON.stringify({
