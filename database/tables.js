@@ -60,6 +60,10 @@ Post.init({
   userId: {
     type: DataTypes.INTEGER,
     allowNull: false
+  },
+  community: {
+    type: DataTypes.INTEGER,
+    allowNull: false
   }
 }, {
   sequelize,
@@ -117,12 +121,35 @@ ActionLog.init({
   sequelize,
   modelName: 'actionlog'
 });
+
+// create communities
+class Community extends Model { }
+Community.init({
+  name: {
+    type: DataTypes.STRING,
+    unique: true,
+    allowNull: false
+  },
+  created_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  },
+  subsribers: DataTypes.INTEGER
+}, {
+  sequelize,
+  modelName: 'communities'
+})
+
+// as is an alias
 User.hasMany(Post, { foreignKey: 'userId', as: 'posts' });
 Post.belongsTo(User, { foreignKey: 'userId', as: 'author' });
 User.hasMany(InboxPost, { foreignKey: 'userId', as: 'inbox' });
 InboxPost.belongsTo(User, { foreignKey: 'userId', as: 'author' });
 User.hasMany(ActionLog, { foreignKey: 'actorId', as: 'actions' });
 User.hasMany(ActionLog, { foreignKey: 'targetUserId', as: 'actedUpon' });
+
+Community.hasMany(Post, {foreignKey: 'community', as: 'child'});
+Post.belongsTo(Community, { foreignKey: 'community', as: 'parent'})
 
 await sequelize.sync();
 
@@ -172,4 +199,4 @@ try {
 }
 await sequelize.sync();
 
-export { sequelize, User, Post, Code, ActionLog, InboxPost };
+export { sequelize, User, Post, Code, ActionLog, InboxPost, Community };

@@ -1,4 +1,5 @@
 // deno-lint-ignore-file
+import "jsr:@std/dotenv/load";
 import gradient from 'https://esm.sh/gradient-string@2.0.1';
 import { startHttpServer } from "./utils.js";
 import instance_name from "./config.js";

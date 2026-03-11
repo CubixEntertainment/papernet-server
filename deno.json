@@ -13,5 +13,9 @@
   "deploy": {
     "org": "delusionss5",
     "app": "maelink-node2"
+  },
+  "allowScripts": {
+    "allow": [],
+    "deny": ["npm:sqlite3@5.1.7"]
   }
 }

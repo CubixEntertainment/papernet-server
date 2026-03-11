@@ -1,4 +1,5 @@
 import { Sequelize, DataTypes, Model } from 'sequelize';
+import { Community } from "./database/tables.js";
 
 const sequelize = new Sequelize('database', 'username', 'password', {
   dialect: 'sqlite',

@@ -1,163 +1,70 @@
 // deno-lint-ignore-file
-import {
-  User,
-  Post,
-  Code,
-  ActionLog,
-  InboxPost
-} from './database/tables.js';
-import {
-  hash,
-  verify
-} from "jsr:@felix/bcrypt";
+import { User, Post, Code, ActionLog, InboxPost } from './database/tables.js';
+import { hash,  verify } from "jsr:@felix/bcrypt";
 import chalk from "npm:chalk";
 import instance_name from "./config.js";
-import {
-  gen
-} from "./codegen.js";
-import {
-  Sequelize
-} from 'sequelize';
+import { gen } from "./codegen.js";
+import { Sequelize } from 'sequelize';
+import { create_post, get_user_by_uuid, is_user_banned, validate_token } from "./db.ts";
+
 const connectedUsers = new Map();
 let backgroundTasksStarted = false;
-export function startHttpServer({
-  port
-} = {}) {
+export function startHttpServer({ port } = {}) {
   if (!backgroundTasksStarted) {
     // start background sweeps and hooks once
-    backgroundTasksStarted = true;
-    setInterval(async () => {
-      const now = new Date();
-      try {
-        const expiredUsers = await User.findAll({
-          where: {
-            expires_at: {
-              [Sequelize.Op.lte]: now
-            }
-          }
-        });
-        expiredUsers.forEach(userRecord => {
-          for (const [socket, userData] of connectedUsers.entries()) {
-            if (userData.token === userRecord.token) {
-              try {
-                socket.close();
-              } catch { };
-              connectedUsers.delete(socket);
-            }
-          }
-        });
-      } catch (e) {
-        console.error('Error during expiration sweep:', e);
-      }
-
-      try {
-        const toDelete = await User.findAll({
-          where: {
-            deletion_scheduled_at: {
-              [Sequelize.Op.lte]: now
-            },
-            deleted_at: null
-          }
-        });
-        for (const target of toDelete) {
-          console.log(`Applying scheduled deletion for user ${target.name} (${target.uuid})`);
-          target.deleted_at = new Date();
-          target.deletion_scheduled_at = null;
-          target.deletion_initiated_by = target.deletion_initiated_by || 'scheduled';
-          try {
-            target.token = null;
-            target.pswd = null;
-            target.display_name = 'Deleted User';
-            target.name = `deleted_${target.uuid}`;
-            await target.save();
-            try {
-              await ActionLog.create({
-                actorId: null,
-                targetUserId: target.id,
-                action: 'applied_deletion',
-                details: JSON.stringify({
-                  when: new Date()
-                })
-              });
-            } catch (logErr) {
-              console.error('Failed to write action log for applied deletion:', logErr);
-            }
-          } catch (e) {
-            console.error('Failed to sanitize deleted user:', e);
-          }
-          for (const [socket, userData] of connectedUsers.entries()) {
-            if (userData.token === target.token || userData.uuid === target.uuid) {
-              try {
-                socket.send(JSON.stringify({
-                  cmd: 'account_deleted'
-                }));
-              } catch (err) {
-                console.warn('socket send error while deleting account:', err);
-              }
-              try {
-                socket.close();
-              } catch (err) {
-                console.warn('socket close error while deleting account:', err);
-              }
-              connectedUsers.delete(socket);
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Error during scheduled-deletion sweep:', e);
-      }
-    }, 5 * 60 * 1000);
+    // TODO: Implement Supabase paranoid tables
 
     // ensure at least 5 keys are present: generate up to 5 on startup
-    async function replenishCodes(target = 5) {
-      try {
-        const count = await Code.count();
-        const need = target - count;
-        if (need > 0) {
-          console.log(`Generating ${need} code(s) to maintain ${target} available keys`);
-          for (let i = 0; i < need; i++) {
-            try {
-              await gen();
-            } catch (e) {
-              console.error('Failed to generate code:', e);
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Failed to check code count:', e);
-      }
-    }
+    // async function replenishCodes(target = 5) {
+    //   try {
+    //     const count = await Code.count();
+    //     const need = target - count;
+    //     if (need > 0) {
+    //       console.log(`Generating ${need} code(s) to maintain ${target} available keys`);
+    //       for (let i = 0; i < need; i++) {
+    //         try {
+    //           await gen();
+    //         } catch (e) {
+    //           console.error('Failed to generate code:', e);
+    //         }
+    //       }
+    //     }
+    //   } catch (e) {
+    //     console.error('Failed to check code count:', e);
+    //   }
+    // }
 
     // initial fill to ensure there are 5 codes
-    replenishCodes(5).catch((e) => console.error('replenishCodes initial error:', e));
+    //  replenishCodes(5).catch((e) => console.error('replenishCodes initial error:', e));
 
     // whenever a Code is destroyed (used), replenish to keep 5
-    Sequelize.afterDestroy(Code, async (codeInstance, options) => {
-      console.log('Code used, replenishing keys...');
-      try {
-        await replenishCodes(5);
-      } catch (e) {
-        console.error('replenishCodes afterDestroy error:', e);
-      }
-    });
+    // Sequelize.afterDestroy(Code, async (codeInstance, options) => {
+    //   console.log('Code used, replenishing keys...');
+    //   try {
+    //     await replenishCodes(5);
+    //   } catch (e) {
+    //     console.error('replenishCodes afterDestroy error:', e);
+    //   }
+    // });
 
     // periodic check: if less than 5 exist, create enough to make 5
-    setInterval(() => {
-      replenishCodes(5).catch((e) => console.error('replenishCodes interval error:', e));
-    }, 30 * 1000);
+    // setInterval(() => {
+    //   replenishCodes(5).catch((e) => console.error('replenishCodes interval error:', e));
+    // }, 30 * 1000);
 
-    Post.addHook('afterCreate', async (post) => {
-      const author = await User.findByPk(post.userId);
-      for (const [socket, userData] of connectedUsers.entries()) {
-        if (userData.uuid !== author.uuid) {
-          try {
-            socket.send(JSON.stringify({
-              cmd: "new_post"
-            }));
-          } catch { }
-        }
-      }
-    });
+    // TODO: make a callback to alert other users a new post was added
+    // Post.addHook('afterCreate', async (post) => {
+    //   const author = await User.findByPk(post.userId);
+    //   for (const [socket, userData] of connectedUsers.entries()) {
+    //     if (userData.uuid !== author.uuid) {
+    //       try {
+    //         socket.send(JSON.stringify({
+    //           cmd: "new_post"
+    //         }));
+    //       } catch { }
+    //     }
+    //   }
+    // });
   }
 
   Deno.serve(async (req) => {
@@ -224,509 +131,7 @@ export function startHttpServer({
             } catch { }
             break;
           }
-          case "reg": {
-            if (!data.pswd || !data.user || !data.code) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "badRequest"
-                }));
-              } catch { }
-              break;
-            }
-            if (data.user.length > 16) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "usernameTooLong"
-                }));
-              } catch { }
-              break;
-            }
-            if (data.user.length < 4) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "usernameTooShort"
-                }));
-              } catch { }
-              break;
-            }
-            const codeEntry = await Code.findOne({
-              where: {
-                value: data.code
-              }
-            });
-            if (!codeEntry) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "badCode"
-                }));
-              } catch { }
-              break;
-            }
-            const usernameEncoded = Array.from(data.user).map((char) => char.charCodeAt(0)).join("");
-            const tokenRaw = `${usernameEncoded}${Date.now()}`;
-            const token = await hash(tokenRaw);
-            try {
-              const normalized = String(data.user).replace(/^@/, "");
-              if (normalized === 'maelink') {
-                try {
-                  socket.send(JSON.stringify({
-                    error: true,
-                    code: 403,
-                    reason: 'reservedName'
-                  }));
-                } catch { }
-                break;
-              }
-              const newUser = await User.create({
-                name: data.user,
-                display_name: data.display_name || data.user,
-                pswd: await hash(data.pswd),
-                token: token,
-                registered_at: new Date(),
-                expires_at: new Date(Date.now() + (60 * 60 * 24 * 3)),
-                uuid: crypto.randomUUID(),
-                role: 'user'
-              });
-              try {
-                socket.send(JSON.stringify({
-                  error: false,
-                  user: newUser.name,
-                  display: newUser.display_name,
-                  token: token,
-                  uuid: newUser.uuid
-                }));
-              } catch { }
-              connectedUsers.set(socket, {
-                user: newUser.name,
-                token: token,
-                uuid: newUser.uuid
-              });
-              try {
-                await codeEntry.destroy();
-              } catch (delErr) {
-                console.error('Failed to delete used code:', delErr);
-              }
-            } catch (error) {
-              if (error.name === 'SequelizeUniqueConstraintError') {
-                try {
-                  socket.send(JSON.stringify({
-                    error: true,
-                    code: 409,
-                    reason: "userExists"
-                  }));
-                } catch { }
-              } else {
-                try {
-                  socket.send(JSON.stringify({
-                    error: true,
-                    code: 500,
-                    reason: "serverError"
-                  }));
-                } catch { }
-                console.error('Registration error:', error);
-              }
-            }
-            break;
-          }
-          case "login_pswd": {
-            if (!data.pswd || !data.user) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "badRequest"
-                }));
-              } catch { }
-              break;
-            }
-            const foundUser = await User.findOne({
-              where: {
-                name: data.user
-              }
-            });
-            if (!foundUser) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 404,
-                  reason: "userNotFound"
-                }));
-              } catch { }
-              break;
-            }
-            if (foundUser.system_account) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 403,
-                  reason: 'systemAccountUseKey'
-                }));
-              } catch { }
-              break;
-            }
-            if (await verify(data.pswd, foundUser.pswd)) {
-              if (foundUser.banned && foundUser.banned_until && new Date(foundUser.banned_until) > new Date()) {
-                try {
-                  socket.send(JSON.stringify({
-                    error: true,
-                    code: 403,
-                    reason: "banned"
-                  }));
-                } catch { }
-                break;
-              }
-              if (foundUser.deletion_scheduled_at) {
-                foundUser.deletion_scheduled_at = null;
-                try {
-                  await foundUser.save();
-                } catch (e) {
-                  console.error('Failed to clear scheduled deletion on login:', e);
-                }
-              }
-              try {
-                socket.send(JSON.stringify({
-                  error: false,
-                  user: foundUser.name,
-                  token: foundUser.token,
-                  uuid: foundUser.uuid
-                }));
-              } catch { }
-              connectedUsers.set(socket, {
-                user: foundUser.name,
-                token: foundUser.token,
-                uuid: foundUser.uuid
-              });
-              console.log(connectedUsers);
-            } else {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "badPswd"
-                }));
-              } catch { }
-            }
-            break;
-          }
-          case "login_token": {
-            if (!data.token) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "badRequest"
-                }));
-              } catch { }
-              break;
-            }
-            const foundUser = await User.findOne({
-              where: {
-                token: data.token
-              }
-            });
-            if (!foundUser) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 404,
-                  reason: "userNotFound"
-                }));
-              } catch { }
-              break;
-            }
-            if (foundUser.system_account) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 403,
-                  reason: 'systemAccountUseKey'
-                }));
-              } catch { }
-              break;
-            }
-            if (foundUser.banned && foundUser.banned_until && new Date(foundUser.banned_until) > new Date()) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 403,
-                  reason: "banned"
-                }));
-              } catch { }
-              break;
-            }
-            if (foundUser.deletion_scheduled_at) {
-              foundUser.deletion_scheduled_at = null;
-              try {
-                await foundUser.save();
-              } catch (e) {
-                console.error('Failed to clear scheduled deletion on token login:', e);
-              }
-            }
-            try {
-              socket.send(JSON.stringify({
-                error: false,
-                user: foundUser.name,
-                token: foundUser.token,
-                uuid: foundUser.uuid
-              }));
-            } catch { }
-            connectedUsers.set(socket, {
-              user: foundUser.name,
-              token: foundUser.token,
-              uuid: foundUser.uuid
-            });
-            console.log(connectedUsers);
-            break;
-          }
-          case "set_avatar": {
-            if (!data.url) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "badRequest"
-                }));
-              } catch { }
-              break;
-            }
-            const cu = connectedUsers.get(socket) || {};
-            if (!cu.token) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 401,
-                  reason: "Unauthorized"
-                }));
-              } catch { }
-              break;
-            }
-            if (data.url.length > 512) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "urlTooLong"
-                }));
-              } catch { }
-              break;
-            }
-            const foundUser = await User.findOne({
-              where: {
-                token: cu.token
-              }
-            });
-            if (!foundUser) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 404,
-                  reason: "userNotFound"
-                }));
-              } catch { }
-              break;
-            }
-            if (!/^https?:\/\/.+\.(png|jpg|jpeg|gif|webp|svg)(\?.*)?$/i.test(data.url)) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "invalidUrl"
-                }));
-              } catch { }
-              break;
-            }
-            foundUser.avatar = data.url;
-            cu.avatar = data.url;
-            connectedUsers.set(socket, cu);
-            try {
-              await foundUser.save();
-              try {
-                socket.send(JSON.stringify({
-                  error: false,
-                  code: 200,
-                  reason: "avatarUpdated",
-                  url: data.url
-                }));
-              } catch { }
-            } catch (saveErr) {
-              console.error('Failed to save avatar URL:', saveErr);
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 500,
-                  reason: "serverError"
-                }));
-              } catch { }
-            }
-            break;
-          }
-          case "provide_token": {
-            if (!data.token) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: "badRequest"
-                }));
-              } catch { }
-              break;
-            }
-            const foundUser = await User.findOne({
-              where: {
-                token: data.token
-              }
-            });
-            if (!foundUser) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 404,
-                  reason: "userNotFound"
-                }));
-              } catch { }
-              break;
-            }
-            if (foundUser.system_account) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 403,
-                  reason: 'systemAccountUseKey'
-                }));
-              } catch { }
-              break;
-            }
-            if (foundUser.banned && foundUser.banned_until && new Date(foundUser.banned_until) > new Date()) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 403,
-                  reason: "banned"
-                }));
-              } catch { }
-              break;
-            }
-            if (foundUser.deletion_scheduled_at) {
-              foundUser.deletion_scheduled_at = null;
-              try {
-                await foundUser.save();
-              } catch (e) {
-                console.error('Failed to clear scheduled deletion on token provide:', e);
-              }
-            }
-            connectedUsers.set(socket, {
-              user: foundUser.name,
-              token: foundUser.token,
-              uuid: foundUser.uuid
-            });
-            break;
-          }
-          case "login_syskey": {
-            if (!data.user || !data.key) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 400,
-                  reason: 'badRequest'
-                }));
-              } catch { }
-              break;
-            }
-            const candidate = await User.findOne({
-              where: {
-                name: data.user
-              }
-            }) || await User.findOne({
-              where: {
-                name: data.user.replace(/^@/, '')
-              }
-            });
-            if (!candidate || !candidate.system_account) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 404,
-                  reason: 'userNotFoundOrNotSystem'
-                }));
-              } catch { }
-              break;
-            }
-            if (!candidate.system_key) {
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 500,
-                  reason: 'noSystemKey'
-                }));
-              } catch { }
-              break;
-            }
-            try {
-              if (!(await verify(data.key, candidate.system_key))) {
-                try {
-                  socket.send(JSON.stringify({
-                    error: true,
-                    code: 403,
-                    reason: 'badKey'
-                  }));
-                } catch { }
-                break;
-              }
-            } catch (verifyErr) {
-              console.error('Error verifying system key:', verifyErr);
-              try {
-                socket.send(JSON.stringify({
-                  error: true,
-                  code: 500,
-                  reason: 'serverError'
-                }));
-              } catch { }
-              break;
-            }
-            const newTokenRaw = `${candidate.uuid}${Date.now()}`;
-            const newToken = await hash(newTokenRaw);
-            candidate.token = newToken;
-            try {
-              await candidate.save();
-            } catch (saveErr) {
-              console.error('Failed to save system login token:', saveErr);
-            }
-            try {
-              await ActionLog.create({
-                actorId: candidate.id,
-                targetUserId: candidate.id,
-                action: 'login_syskey',
-                details: JSON.stringify({
-                  method: 'syskey',
-                  timestamp: new Date()
-                })
-              });
-            } catch (logErr) {
-              console.error('Failed to write action log:', logErr);
-            }
-            try {
-              socket.send(JSON.stringify({
-                error: false,
-                user: candidate.name,
-                token: candidate.token,
-                uuid: candidate.uuid
-              }));
-            } catch { }
-            connectedUsers.set(socket, {
-              user: candidate.name,
-              token: candidate.token,
-              uuid: candidate.uuid
-            });
-            break;
-          }
+          // register and login stuff are handled by supabase and the tokens
           default:
             try {
               socket.send(JSON.stringify({
@@ -749,6 +154,7 @@ export function startHttpServer({
       "Access-Control-Allow-Headers": "Content-Type, token",
     };
 
+    // TODO: This should be a global where each endpoint is a relative community
     const endpoints = {
       home: "/api/feed"
     };
@@ -762,7 +168,9 @@ export function startHttpServer({
 
     if (req.method === "POST" && url.pathname === endpoints.home) {
       const token = req.headers.get("token");
-      if (!token) {
+      const user_id = req.headers.get("user_id");
+      const device_id = req.headers.get("device_id");
+      if (!token || !user_id || !device_id) {
         return new Response("Unauthorized", {
           status: 401,
           headers: {
@@ -771,13 +179,24 @@ export function startHttpServer({
           }
         });
       }
-      const foundUser = await User.findOne({
-        where: {
-          token
-        }
-      });
-      if (!foundUser) {
+
+      // validate the token
+      const tokenData = await validate_token(token, device_id, user_id);
+      if (tokenData.status != 200) {
         return new Response("Unauthorized", {
+          status: tokenData.status,
+          message: tokenData.msg,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "text/plain"
+          }
+        });
+      }
+
+      const foundUser = await get_user_by_uuid(user_id);
+
+      if (foundUser.status != 200) {
+        return new Response(foundUser.msg, {
           status: 401,
           headers: {
             ...CORS_HEADERS,
@@ -785,51 +204,37 @@ export function startHttpServer({
           }
         });
       }
-      if (foundUser.banned && foundUser.banned_until && new Date(foundUser.banned_until) > new Date()) {
-        return new Response("Forbidden", {
-          status: 403,
+
+      const banData = await is_user_banned(user_id)
+
+      if (banData.status != 200) {
+        return new Response(banData.msg, {
+          status: 401,
           headers: {
             ...CORS_HEADERS,
             "Content-Type": "text/plain"
           }
         });
       }
+
+
       try {
         const body = await req.json();
         console.log(body);
         const rawContent = (body && (body.content ?? body.p ?? body.text));
         const content = (rawContent == null) ? '' : String(rawContent).trim();
-        if (content.length === 0) {
-          console.warn('Invalid post content', {
-            rawContent,
-            type: typeof rawContent
-          });
-          return new Response("Bad Request", {
-            status: 400,
+       
+        const post = await create_post(content, user_id, 0)
+        if (post.status != 200 ) {
+          return new Response(post.msg, {
+            status: post.status,
             headers: {
               ...CORS_HEADERS,
               "Content-Type": "text/plain"
             }
           });
         }
-        if (content.length > 256) {
-          console.warn('Post is too long', {
-            rawContent,
-            type: typeof rawContent
-          });
-          return new Response("Bad Request", {
-            status: 400,
-            headers: {
-              ...CORS_HEADERS,
-              "Content-Type": "text/plain"
-            }
-          });
-        }
-        await Post.create({
-          content: content,
-          userId: foundUser.id,
-          timestamp: Date.now()
-        });
+
         return new Response(JSON.stringify({
           success: true
         }), {
