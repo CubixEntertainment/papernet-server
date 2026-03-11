@@ -1,5 +1,4 @@
 // deno-lint-ignore-file
-import { User, Post, Code, ActionLog, InboxPost } from './database/tables.js';
 import { hash,  verify } from "jsr:@felix/bcrypt";
 import chalk from "npm:chalk";
 import instance_name from "./config.js";
@@ -1011,133 +1010,133 @@ export function startHttpServer({ port } = {}) {
         }
       });
     } else if (req.method === "GET" && url.pathname === "/api/actionlogs") { // TODO: Rewrite this when actionlog is implemented
-      const token = req.headers.get('token');
-      if (!token) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      const actor = await User.findOne({
-        where: {
-          token
-        }
-      });
-      if (!actor) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      if (!['mod', 'admin', 'sysadmin'].includes(actor.role)) return new Response('Forbidden', {
-        status: 403,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
+      // const token = req.headers.get('token');
+      // if (!token) return new Response('Unauthorized', {
+      //   status: 401,
+      //   headers: {
+      //     ...CORS_HEADERS,
+      //     'Content-Type': 'text/plain'
+      //   }
+      // });
+      // const actor = await User.findOne({
+      //   where: {
+      //     token
+      //   }
+      // });
+      // if (!actor) return new Response('Unauthorized', {
+      //   status: 401,
+      //   headers: {
+      //     ...CORS_HEADERS,
+      //     'Content-Type': 'text/plain'
+      //   }
+      // });
+      // if (!['mod', 'admin', 'sysadmin'].includes(actor.role)) return new Response('Forbidden', {
+      //   status: 403,
+      //   headers: {
+      //     ...CORS_HEADERS,
+      //     'Content-Type': 'text/plain'
+      //   }
+      // });
 
-      const actionFilter = url.searchParams.get('action') || null;
-      const actorFilter = url.searchParams.get('actor') || null;
-      const targetFilter = url.searchParams.get('target') || null;
-      const since = url.searchParams.get('since') || null;
-      const until = url.searchParams.get('until') || null;
-      const limit = Math.min(500, Number(url.searchParams.get('limit') || 100));
-      const page = Math.max(0, Number(url.searchParams.get('page') || 0));
-      const offset = page * limit;
+      // const actionFilter = url.searchParams.get('action') || null;
+      // const actorFilter = url.searchParams.get('actor') || null;
+      // const targetFilter = url.searchParams.get('target') || null;
+      // const since = url.searchParams.get('since') || null;
+      // const until = url.searchParams.get('until') || null;
+      // const limit = Math.min(500, Number(url.searchParams.get('limit') || 100));
+      // const page = Math.max(0, Number(url.searchParams.get('page') || 0));
+      // const offset = page * limit;
 
-      try {
-        const where = {};
-        const {
-          Op
-        } = Sequelize;
-        if (actionFilter) where.action = actionFilter;
-        if (since || until) where.created_at = {};
-        if (since) where.created_at[Op.gte] = new Date(since);
-        if (until) where.created_at[Op.lte] = new Date(until);
+      // try {
+      //   const where = {};
+      //   const {
+      //     Op
+      //   } = Sequelize;
+      //   if (actionFilter) where.action = actionFilter;
+      //   if (since || until) where.created_at = {};
+      //   if (since) where.created_at[Op.gte] = new Date(since);
+      //   if (until) where.created_at[Op.lte] = new Date(until);
 
-        if (actorFilter) {
-          const aUser = await User.findOne({
-            where: {
-              name: actorFilter
-            }
-          }) || await User.findOne({
-            where: {
-              name: actorFilter.replace(/^@/, '')
-            }
-          });
-          if (!aUser) return new Response(JSON.stringify({
-            logs: []
-          }), {
-            headers: {
-              ...CORS_HEADERS,
-              'Content-Type': 'application/json'
-            }
-          });
-          where.actorId = aUser.id;
-        }
-        if (targetFilter) {
-          const tUser = await User.findOne({
-            where: {
-              name: targetFilter
-            }
-          }) || await User.findOne({
-            where: {
-              name: targetFilter.replace(/^@/, '')
-            }
-          });
-          if (!tUser) return new Response(JSON.stringify({
-            logs: []
-          }), {
-            headers: {
-              ...CORS_HEADERS,
-              'Content-Type': 'application/json'
-            }
-          });
-          where.targetUserId = tUser.id;
-        }
+      //   if (actorFilter) {
+      //     const aUser = await User.findOne({
+      //       where: {
+      //         name: actorFilter
+      //       }
+      //     }) || await User.findOne({
+      //       where: {
+      //         name: actorFilter.replace(/^@/, '')
+      //       }
+      //     });
+      //     if (!aUser) return new Response(JSON.stringify({
+      //       logs: []
+      //     }), {
+      //       headers: {
+      //         ...CORS_HEADERS,
+      //         'Content-Type': 'application/json'
+      //       }
+      //     });
+      //     where.actorId = aUser.id;
+      //   }
+      //   if (targetFilter) {
+      //     const tUser = await User.findOne({
+      //       where: {
+      //         name: targetFilter
+      //       }
+      //     }) || await User.findOne({
+      //       where: {
+      //         name: targetFilter.replace(/^@/, '')
+      //       }
+      //     });
+      //     if (!tUser) return new Response(JSON.stringify({
+      //       logs: []
+      //     }), {
+      //       headers: {
+      //         ...CORS_HEADERS,
+      //         'Content-Type': 'application/json'
+      //       }
+      //     });
+      //     where.targetUserId = tUser.id;
+      //   }
 
-        const logs = await ActionLog.findAll({
-          where,
-          order: [
-            ['created_at', 'DESC']
-          ],
-          limit,
-          offset
-        });
-        const mapped = [];
-        for (const l of logs) {
-          const a = l.actorId ? await User.findByPk(l.actorId) : null;
-          const t = l.targetUserId ? await User.findByPk(l.targetUserId) : null;
-          mapped.push({
-            id: l.id,
-            actor: a ? a.name : null,
-            target: t ? t.name : null,
-            action: l.action,
-            details: l.details,
-            created_at: l.created_at
-          });
-        }
-        return new Response(JSON.stringify({
-          logs: mapped
-        }), {
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'application/json'
-          }
-        });
-      } catch (e) {
-        console.error('Failed to fetch action logs:', e);
-        return new Response('Internal Server Error', {
-          status: 500,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'text/plain'
-          }
-        });
-      }
+      //   const logs = await ActionLog.findAll({
+      //     where,
+      //     order: [
+      //       ['created_at', 'DESC']
+      //     ],
+      //     limit,
+      //     offset
+      //   });
+      //   const mapped = [];
+      //   for (const l of logs) {
+      //     const a = l.actorId ? await User.findByPk(l.actorId) : null;
+      //     const t = l.targetUserId ? await User.findByPk(l.targetUserId) : null;
+      //     mapped.push({
+      //       id: l.id,
+      //       actor: a ? a.name : null,
+      //       target: t ? t.name : null,
+      //       action: l.action,
+      //       details: l.details,
+      //       created_at: l.created_at
+      //     });
+      //   }
+      //   return new Response(JSON.stringify({
+      //     logs: mapped
+      //   }), {
+      //     headers: {
+      //       ...CORS_HEADERS,
+      //       'Content-Type': 'application/json'
+      //     }
+      //   });
+      // } catch (e) {
+      //   console.error('Failed to fetch action logs:', e);
+      //   return new Response('Internal Server Error', {
+      //     status: 500,
+      //     headers: {
+      //       ...CORS_HEADERS,
+      //       'Content-Type': 'text/plain'
+      //     }
+      //   });
+      // }
     } else if (req.method === 'DELETE' && url.pathname === '/api/account') {
       const token = req.headers.get("token");
       const user_id = req.headers.get("user_id");
@@ -1191,119 +1190,120 @@ export function startHttpServer({ port } = {}) {
           'Content-Type': 'application/json'
         }
       });
-    } else if (req.method === "GET" && url.pathname === "/api/inbox") {
-      const token = req.headers.get('token');
-      if (!token) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      const actor = await User.findOne({
-        where: {
-          token
-        }
-      });
-      if (!actor) return new Response('Unauthorized', {
-        status: 401,
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'text/plain'
-        }
-      });
-      const messages = await InboxPost.findAll({
-        where: {
-          toUserId: actor.id
-        },
-        order: [
-          ['created_at', 'DESC']
-        ]
-      });
-      return new Response(JSON.stringify({
-        messages
-      }), {
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'application/json'
-        }
-      });
-    } else if (req.method === "POST" && url.pathname === "/api/inbox") {
-    const token = req.headers.get('token');
-    if (!token) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
-    const sender = await User.findOne({ where: { token } });
-    if (!sender) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    } 
+    // else if (req.method === "GET" && url.pathname === "/api/inbox") {
+    //   const token = req.headers.get('token');
+    //   if (!token) return new Response('Unauthorized', {
+    //     status: 401,
+    //     headers: {
+    //       ...CORS_HEADERS,
+    //       'Content-Type': 'text/plain'
+    //     }
+    //   });
+    //   const actor = await User.findOne({
+    //     where: {
+    //       token
+    //     }
+    //   });
+    //   if (!actor) return new Response('Unauthorized', {
+    //     status: 401,
+    //     headers: {
+    //       ...CORS_HEADERS,
+    //       'Content-Type': 'text/plain'
+    //     }
+    //   });
+    //   const messages = await InboxPost.findAll({
+    //     where: {
+    //       toUserId: actor.id
+    //     },
+    //     order: [
+    //       ['created_at', 'DESC']
+    //     ]
+    //   });
+    //   return new Response(JSON.stringify({
+    //     messages
+    //   }), {
+    //     headers: {
+    //       ...CORS_HEADERS,
+    //       'Content-Type': 'application/json'
+    //     }
+    //   });
+    // } else if (req.method === "POST" && url.pathname === "/api/inbox") {
+    // const token = req.headers.get('token');
+    // if (!token) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    // const sender = await User.findOne({ where: { token } });
+    // if (!sender) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-    try {
-    const body = await req.json();
-    const rawTarget = body.to || body.user || body.uuid;
-    const rawContent = body.content || body.text || body.msg;
-    if (!rawTarget || !rawContent) return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    // try {
+    // const body = await req.json();
+    // const rawTarget = body.to || body.user || body.uuid;
+    // const rawContent = body.content || body.text || body.msg;
+    // if (!rawTarget || !rawContent) return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-    const content = String(rawContent).trim();
-    if (!content || content.length > 2000) return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    // const content = String(rawContent).trim();
+    // if (!content || content.length > 2000) return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-    // find recipient by uuid or name (allow @ prefix)
-    const recipient = await User.findOne({ where: { uuid: rawTarget } })
-      || await User.findOne({ where: { name: rawTarget } })
-      || await User.findOne({ where: { name: String(rawTarget).replace(/^@/, '') } });
+    // // find recipient by uuid or name (allow @ prefix)
+    // const recipient = await User.findOne({ where: { uuid: rawTarget } })
+    //   || await User.findOne({ where: { name: rawTarget } })
+    //   || await User.findOne({ where: { name: String(rawTarget).replace(/^@/, '') } });
 
-    if (!recipient) return new Response('Not Found', { status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    // if (!recipient) return new Response('Not Found', { status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-    const msg = await InboxPost.create({
-      content,
-      timestamp: new Date(),
-      userId: sender.id,
-      toUserId: recipient.id
-    });
+    // const msg = await InboxPost.create({
+    //   content,
+    //   timestamp: new Date(),
+    //   userId: sender.id,
+    //   toUserId: recipient.id
+    // });
 
-    // notify connected recipient sockets
-    for (const [sock, ud] of connectedUsers.entries()) {
-      try {
-      if (ud.uuid === recipient.uuid || ud.token === recipient.token) {
-        sock.send(JSON.stringify({
-        cmd: 'inbox_new',
-        message: {
-          id: msg.id,
-          from: sender.name,
-          content: msg.content,
-          timestamp: msg.timestamp || msg.createdAt
-        }
-        }));
-      }
-      } catch { }
-    }
+    // // notify connected recipient sockets
+    // for (const [sock, ud] of connectedUsers.entries()) {
+    //   try {
+    //   if (ud.uuid === recipient.uuid || ud.token === recipient.token) {
+    //     sock.send(JSON.stringify({
+    //     cmd: 'inbox_new',
+    //     message: {
+    //       id: msg.id,
+    //       from: sender.name,
+    //       content: msg.content,
+    //       timestamp: msg.timestamp || msg.createdAt
+    //     }
+    //     }));
+    //   }
+    //   } catch { }
+    // }
 
-    return new Response(JSON.stringify({ success: true, id: msg.id }), {
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
-    });
-    } catch {
-    return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
-    }
-    } else if (req.method === "DELETE" && url.pathname === "/api/inbox") {
-      const token = req.headers.get('token');
-      if (!token) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
-      const actor = await User.findOne({ where: { token } });
-      if (!actor) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    // return new Response(JSON.stringify({ success: true, id: msg.id }), {
+    //   headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+    // });
+    // } catch {
+    // return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    // }
+    // } else if (req.method === "DELETE" && url.pathname === "/api/inbox") {
+    //   const token = req.headers.get('token');
+    //   if (!token) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    //   const actor = await User.findOne({ where: { token } });
+    //   if (!actor) return new Response('Unauthorized', { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-      const id = url.searchParams.get('id');
-      if (!id) return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    //   const id = url.searchParams.get('id');
+    //   if (!id) return new Response('Bad Request', { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-      const message = await InboxPost.findOne({ where: { id } });
-      if (!message) return new Response('Not Found', { status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    //   const message = await InboxPost.findOne({ where: { id } });
+    //   if (!message) return new Response('Not Found', { status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
 
-      const isModerator = ['mod', 'admin', 'sysadmin'].includes(actor.role);
-      // allow deletion if actor is sender, recipient, or moderator
-      if (message.userId !== actor.id && message.toUserId !== actor.id && !isModerator) {
-      return new Response('Forbidden', { status: 403, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
-      }
+    //   const isModerator = ['mod', 'admin', 'sysadmin'].includes(actor.role);
+    //   // allow deletion if actor is sender, recipient, or moderator
+    //   if (message.userId !== actor.id && message.toUserId !== actor.id && !isModerator) {
+    //   return new Response('Forbidden', { status: 403, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    //   }
 
-      try {
-      await message.destroy();
-      return new Response(JSON.stringify({ success: true }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
-      } catch {
-      return new Response('Internal Server Error', { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
-      }
-    }
+    //   try {
+    //   await message.destroy();
+    //   return new Response(JSON.stringify({ success: true }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+    //   } catch {
+    //   return new Response('Internal Server Error', { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
+    //   }
+    // }
   })
 };
