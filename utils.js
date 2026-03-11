@@ -1,9 +1,9 @@
 // deno-lint-ignore-file
 import { hash,  verify } from "jsr:@felix/bcrypt";
 import chalk from "npm:chalk";
-import instance_name from "./config.js";
-import { gen } from "./codegen.js";
-import { DataTypes, Sequelize } from 'sequelize';
+// import instance_name from "./config.js";
+// import { gen } from "./codegen.js";
+// import { DataTypes, Sequelize } from 'sequelize';
 import { ban_user_by_uuid, connectedUsers, create_post, create_reply, delete_post, delete_user, get_community_by_name, get_post_by_id, get_posts_from_community, get_replies_from_post_id, get_user_by_name, get_user_by_uuid, is_user_banned, like_post_by_id, like_reply_by_id, userSockets, validate_token } from "./db.ts";
 
 
