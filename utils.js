@@ -228,9 +228,8 @@ export function startHttpServer({ port } = {}) {
       // validate the token
       const tokenData = await validate_token(token, device_id, user_id);
       if (tokenData.status != 200) {
-        return new Response("Unauthorized", {
+        return new Response(tokenData.msg, {
           status: tokenData.status,
-          message: tokenData.msg,
           headers: {
             ...CORS_HEADERS,
             "Content-Type": "text/plain"
